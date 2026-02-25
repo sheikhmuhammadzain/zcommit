@@ -1,6 +1,10 @@
-# zcommit
+# ⚡ zcommit
 
 **AI-powered git commit message generator** using [Cerebras](https://cerebras.ai) fast inference.
+
+Created by **Muhammad Zain** · [zainafzal.dev](https://zainafzal.dev)
+
+---
 
 Stop writing commit messages manually. `zcommit` analyzes your staged changes and generates 3 smart commit messages following the [Conventional Commits](https://www.conventionalcommits.org/) specification. Pick one, hit enter, done.
 
@@ -44,7 +48,7 @@ zcommit               # Interactive: stage, pick message, confirm
 zcommit -a            # Stage all files automatically
 zcommit -y            # Skip confirmation prompt
 zcommit -a -y         # Fastest: stage all, pick message, auto-confirm
-zcommit config        # Set/update your Cerebras API key
+zcommit config        # Set, update, or delete your API key
 zcommit --help        # Show help
 zcommit --version     # Show version
 ```
@@ -58,16 +62,27 @@ zcommit --version     # Show version
 | `-h`, `--help`     | Show help                                |
 | `-v`, `--version`  | Show version                             |
 
+### Navigation
+
+| Key              | Action                |
+| ---------------- | --------------------- |
+| `↑`/`↓` or `j`/`k` | Move selection     |
+| `1`/`2`/`3`      | Jump to option        |
+| `Enter`           | Confirm selection     |
+| `Ctrl+C`          | Cancel and exit       |
+
 ## Example
 
 ```
   ⚡ zcommit — AI-powered git commits
-  ─────────────────────────────────
+  ─────────────────────────────────────────
+  Created by Muhammad Zain · zainafzal.dev
+  Run zcommit --help for all commands & flags
 
   Branch: main
   Changed files:
-    + src/utils.js
-    ~ src/index.js
+    + new  src/utils.js
+    ~ mod  src/index.js
 
   How would you like to stage?
   ❯ Stage all changes  (git add .)
@@ -114,6 +129,10 @@ API key is resolved in this order:
 - Node.js 18+
 - Git installed and in PATH
 - A Cerebras API key ([free tier available](https://cloud.cerebras.ai))
+
+## Author
+
+**Muhammad Zain** · [zainafzal.dev](https://zainafzal.dev)
 
 ## License
 
