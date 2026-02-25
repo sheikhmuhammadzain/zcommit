@@ -90,7 +90,6 @@ process.on("unhandledRejection", (err) => {
 // ─── Parse flags ─────────────────────────────────────────────────────────────
 
 const flagAll = flags.has("--all") || flags.has("-a");
-const flagYes = flags.has("--yes") || flags.has("-y");
 
 // ─── Route subcommands ──────────────────────────────────────────────────────
 
@@ -290,25 +289,11 @@ async function main() {
     process.exit(1);
   }
 
-  // ── Step 8: Pick a message ───────────────────────────────────────────────
+  // ── Step 8: Pick a message and commit ────────────────────────────────────
   const choice = await select(c.bold("  Pick a commit message:"), messages);
   const selectedMessage = messages[choice];
 
-  console.log();
-
-  // ── Step 9: Confirm ──────────────────────────────────────────────────────
-  if (!flagYes) {
-    const shouldCommit = await confirm(
-      `  ${c.bold("Commit with:")} ${c.green(`"${selectedMessage}"`)}\n  ${c.dim("Proceed?")}`
-    );
-
-    if (!shouldCommit) {
-      console.log(c.yellow("\n  ⚠ Commit cancelled.\n"));
-      process.exit(0);
-    }
-  }
-
-  // ── Step 10: Commit ──────────────────────────────────────────────────────
+  // ── Step 9: Commit (selecting a message IS the confirmation) ────────────
   try {
     commit(selectedMessage);
     console.log(c.green(`\n  ✔ Committed successfully!`));

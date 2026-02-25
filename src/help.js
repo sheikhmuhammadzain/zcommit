@@ -13,14 +13,11 @@ ${c.bold("USAGE")}
   ${c.cyan("zcommit")}                Analyze changes & generate commit messages
   ${c.cyan("zcommit config")}         Set, update, or delete your API key
   ${c.cyan("zcommit -a")}             Stage all + generate (skip staging prompt)
-  ${c.cyan("zcommit -y")}             Auto-confirm the selected message
-  ${c.cyan("zcommit -a -y")}          Full auto: stage all, pick message, commit
   ${c.cyan("zcommit --help")}         Show this help message
   ${c.cyan("zcommit --version")}      Show version
 
 ${c.bold("FLAGS")}
   ${c.cyan("-a, --all")}         Stage all changes automatically
-  ${c.cyan("-y, --yes")}         Skip commit confirmation prompt
   ${c.cyan("-h, --help")}        Show help
   ${c.cyan("-v, --version")}     Show version
 
@@ -29,12 +26,12 @@ ${c.bold("HOW IT WORKS")}
   2. Asks how you want to stage (all or specific files)
   3. Sends the diff to Cerebras AI (gpt-oss-120b)
   4. Presents 3 commit message suggestions
-  5. You pick one with arrow keys and it commits
+  5. You pick one with arrow keys — it commits instantly
 
 ${c.bold("NAVIGATION")}
   ${c.cyan("↑/↓")} or ${c.cyan("j/k")}       Move selection
   ${c.cyan("1/2/3")}            Jump to option
-  ${c.cyan("Enter")}            Confirm selection
+  ${c.cyan("Enter")}            Confirm and commit
   ${c.cyan("Ctrl+C")}           Cancel and exit
 
 ${c.bold("CONFIGURATION")}
@@ -48,11 +45,8 @@ ${c.bold("EXAMPLES")}
   ${c.dim("# Interactive commit")}
   $ zcommit
 
-  ${c.dim("# Quick commit — stage all, still pick message")}
+  ${c.dim("# Quick — stage all, then pick message")}
   $ zcommit -a
-
-  ${c.dim("# Fastest — stage all, auto-confirm first AI suggestion")}
-  $ zcommit -a -y
 
   ${c.dim("# Set up or change your API key")}
   $ zcommit config
