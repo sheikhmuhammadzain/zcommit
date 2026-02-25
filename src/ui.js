@@ -282,6 +282,17 @@ export function banner() {
   console.log(
     c.bold(c.cyan("  ⚡ zcommit")) + c.dim(" — AI-powered git commits")
   );
-  console.log(c.dim("  ─────────────────────────────────"));
+  console.log(c.dim("  ─────────────────────────────────────────"));
+  console.log(
+    c.dim("  Created by ") +
+      c.bold("Muhammad Zain") +
+      c.dim(" · ") +
+      c.cyan("zainafzal.dev")
+  );
+  console.log(
+    c.dim("  Run ") +
+      c.cyan("zcommit --help") +
+      c.dim(" for all commands & flags")
+  );
   console.log();
 }

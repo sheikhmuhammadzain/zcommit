@@ -164,20 +164,55 @@ export function stageFiles(files) {
 
 /**
  * Get the diff of staged changes for the AI prompt.
- * Limits output to avoid token bloat.
+ * Uses a smart strategy to maximize context within token limits:
+ *  - Always includes the full --stat summary (bird's-eye view)
+ *  - Prioritizes source code diffs over docs/config
+ *  - Truncates per-file if individual diffs are huge
  */
 export function getStagedDiff() {
   try {
     const stat = run(["diff", "--cached", "--stat"]);
-    const detailed = run(["diff", "--cached"]);
+    const fileNames = run(["diff", "--cached", "--name-only"]);
+    if (!fileNames) return { stat: "", diff: "" };
 
-    const MAX_DIFF_LEN = 4000;
-    const truncated =
-      detailed.length > MAX_DIFF_LEN
-        ? detailed.slice(0, MAX_DIFF_LEN) + "\n\n... [diff truncated]"
-        : detailed;
+    const files = fileNames.split("\n").filter(Boolean);
 
-    return { stat, diff: truncated };
+    // Sort files: source code first, then config, then docs/other
+    const priority = (f) => {
+      if (/\.(js|ts|jsx|tsx|py|go|rs|java|c|cpp|rb|php)$/i.test(f)) return 0;
+      if (/\.(json|ya?ml|toml|env|lock)$/i.test(f)) return 1;
+      if (/\.(md|txt|rst|html|css)$/i.test(f)) return 2;
+      return 1;
+    };
+    const sorted = [...files].sort((a, b) => priority(a) - priority(b));
+
+    // Collect per-file diffs, respecting a total budget
+    const MAX_TOTAL = 12000; // ~3000 tokens, enough for AI context
+    const MAX_PER_FILE = 3000; // cap any single file
+    let total = 0;
+    const parts = [];
+
+    for (const file of sorted) {
+      if (total >= MAX_TOTAL) {
+        parts.push(`\n... (${sorted.length - parts.length} more files omitted)`);
+        break;
+      }
+
+      try {
+        let fileDiff = run(["diff", "--cached", "--", file]);
+        if (fileDiff.length > MAX_PER_FILE) {
+          fileDiff =
+            fileDiff.slice(0, MAX_PER_FILE) +
+            `\n... [${file} truncated]`;
+        }
+        parts.push(fileDiff);
+        total += fileDiff.length;
+      } catch {
+        // skip unreadable file
+      }
+    }
+
+    return { stat, diff: parts.join("\n") };
   } catch {
     return { stat: "", diff: "" };
   }

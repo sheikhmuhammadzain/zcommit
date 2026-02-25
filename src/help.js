@@ -7,13 +7,14 @@ import { c } from "./ui.js";
 export function printHelp(version) {
   console.log(`
 ${c.bold(c.cyan("⚡ zcommit"))} ${c.dim(`v${version}`)} — AI-powered git commit messages
+${c.dim("Created by")} ${c.bold("Muhammad Zain")} ${c.dim("·")} ${c.cyan("zainafzal.dev")}
 
 ${c.bold("USAGE")}
   ${c.cyan("zcommit")}                Analyze changes & generate commit messages
-  ${c.cyan("zcommit config")}         Configure your Cerebras API key
+  ${c.cyan("zcommit config")}         Set, update, or delete your API key
   ${c.cyan("zcommit -a")}             Stage all + generate (skip staging prompt)
   ${c.cyan("zcommit -y")}             Auto-confirm the selected message
-  ${c.cyan("zcommit -a -y")}          Full auto: stage all, pick first, commit
+  ${c.cyan("zcommit -a -y")}          Full auto: stage all, pick message, commit
   ${c.cyan("zcommit --help")}         Show this help message
   ${c.cyan("zcommit --version")}      Show version
 
@@ -28,7 +29,13 @@ ${c.bold("HOW IT WORKS")}
   2. Asks how you want to stage (all or specific files)
   3. Sends the diff to Cerebras AI (gpt-oss-120b)
   4. Presents 3 commit message suggestions
-  5. You pick one with arrow keys, and it commits
+  5. You pick one with arrow keys and it commits
+
+${c.bold("NAVIGATION")}
+  ${c.cyan("↑/↓")} or ${c.cyan("j/k")}       Move selection
+  ${c.cyan("1/2/3")}            Jump to option
+  ${c.cyan("Enter")}            Confirm selection
+  ${c.cyan("Ctrl+C")}           Cancel and exit
 
 ${c.bold("CONFIGURATION")}
   API key is read from (in priority order):

@@ -29,16 +29,10 @@ export async function generateCommitMessages(apiKey, diffData, recentLog) {
     timeout: REQUEST_TIMEOUT_MS,
   });
 
-  const systemPrompt = `You are an expert at writing concise, meaningful git commit messages following the Conventional Commits specification.
-
-Rules:
-- Use format: <type>(<optional scope>): <description>
-- Types: feat, fix, refactor, docs, style, test, chore, perf, ci, build
-- Description must be lowercase, imperative mood, no period at end
-- Keep under 72 characters
-- Be specific about what changed and why
-- Return EXACTLY 3 commit messages, one per line, numbered 1-3
-- Do NOT include any explanation, just the 3 numbered messages`;
+  // Keep system prompt short and direct — reasoning models burn tokens on thinking.
+  const systemPrompt =
+    "Output exactly 3 git commit messages using conventional commits format (type(scope): description). " +
+    "Lowercase, imperative mood, under 72 chars each. Numbered 1-3, one per line. Nothing else.";
 
   const userPrompt = buildUserPrompt(diffData, recentLog);
 
@@ -53,11 +47,31 @@ Rules:
         ],
         model: MODEL,
         temperature: 0.7,
-        max_tokens: 300,
+        // Must be high enough for reasoning models that use internal thinking tokens.
+        // gpt-oss-120b uses ~200-400 tokens for reasoning before outputting the answer.
+        max_tokens: 2048,
       });
 
-      const content = response.choices[0]?.message?.content || "";
-      return parseMessages(content);
+      const msg = response.choices[0]?.message;
+      const content = msg?.content || "";
+
+      // Try content first, then fall back to extracting from reasoning field
+      let messages = parseMessages(content);
+      if (messages.length < 3 && msg?.reasoning) {
+        const fromReasoning = extractFromReasoning(msg.reasoning);
+        // Fill missing slots from reasoning
+        for (const m of fromReasoning) {
+          if (messages.length >= 3) break;
+          if (!messages.includes(m)) messages.push(m);
+        }
+      }
+
+      // Pad with fallbacks if still short
+      while (messages.length < 3) {
+        messages.push("chore: update project files");
+      }
+
+      return messages.slice(0, 3);
     } catch (err) {
       lastError = err;
 
@@ -78,54 +92,87 @@ Rules:
 
 /**
  * Build the user prompt from diff data and recent log.
+ * Kept concise to minimize reasoning token usage.
  * @param {{ stat: string, diff: string }} diffData
  * @param {string} recentLog
  * @returns {string}
  */
 function buildUserPrompt(diffData, recentLog) {
-  let prompt = `Here are the staged changes:\n\n--- Diff Stats ---\n${diffData.stat}\n\n--- Diff Details ---\n${diffData.diff}`;
+  let prompt = `Diff stats:\n${diffData.stat}\n\nDiff:\n${diffData.diff}`;
 
   if (recentLog) {
-    prompt += `\n\n--- Recent Commits (for style context) ---\n${recentLog}`;
+    prompt += `\n\nRecent commits:\n${recentLog}`;
   }
 
-  prompt += "\n\nGenerate 3 commit messages for these changes:";
   return prompt;
 }
 
 /**
- * Parse the AI response into an array of 3 commit messages.
- * Handles multiple AI output formats robustly.
+ * Parse the AI response into commit messages.
+ * Handles numbered lists, bullet points, bare lines, etc.
  * @param {string} raw
  * @returns {string[]}
  */
 function parseMessages(raw) {
-  const lines = raw
-    .split("\n")
-    .map((l) => l.trim())
-    .filter(Boolean);
+  if (!raw) return [];
 
+  const lines = raw.split("\n").map((l) => l.trim()).filter(Boolean);
   const messages = [];
 
   for (const line of lines) {
-    // Strip numbered prefixes: "1. ", "1) ", "1- ", "1: ", etc.
-    const cleaned = line.replace(/^\d+[\.\):\-]\s*/, "").trim();
+    // Strip numbered prefixes: "1. ", "1) ", "1- ", "1: ", "- ", "* "
+    let cleaned = line
+      .replace(/^\d+[\.\):\-]\s*/, "")
+      .replace(/^[\-\*]\s+/, "")
+      .trim();
 
-    // Strip surrounding quotes if present
-    const unquoted = cleaned.replace(/^["'`]+|["'`]+$/g, "");
+    // Strip surrounding quotes
+    cleaned = cleaned.replace(/^["'`]+|["'`]+$/g, "");
 
-    if (unquoted.length > 0 && unquoted.length < 200) {
-      messages.push(unquoted);
+    // Strip trailing whitespace artifacts like " \n" or multiple spaces
+    cleaned = cleaned.replace(/\s+/g, " ").trim();
+
+    // Must look like a commit message (has a colon, reasonable length)
+    if (cleaned.length > 5 && cleaned.length < 200 && cleaned.includes(":")) {
+      messages.push(cleaned);
     }
 
-    // Stop once we have 3
     if (messages.length >= 3) break;
   }
 
-  // Fallback if AI returned fewer than 3
-  while (messages.length < 3) {
-    messages.push("chore: update project files");
+  return messages;
+}
+
+/**
+ * Extract commit messages from the reasoning field as a fallback.
+ * Reasoning models sometimes draft messages in their thinking before
+ * outputting a truncated response.
+ * @param {string} reasoning
+ * @returns {string[]}
+ */
+function extractFromReasoning(reasoning) {
+  if (!reasoning) return [];
+
+  const messages = [];
+
+  // Look for numbered lines that contain conventional commit patterns
+  const conventionalPattern = /\d+[\.\):\-]\s*(.+)/g;
+  let match;
+
+  while ((match = conventionalPattern.exec(reasoning)) !== null) {
+    let candidate = match[1].trim();
+    // Strip quotes
+    candidate = candidate.replace(/^["'`]+|["'`]+$/g, "").trim();
+
+    // Must have conventional commit format: type: or type(scope):
+    if (/^(feat|fix|refactor|docs|style|test|chore|perf|ci|build)(\(.+?\))?:/.test(candidate)) {
+      if (candidate.length > 5 && candidate.length < 200) {
+        messages.push(candidate);
+      }
+    }
+
+    if (messages.length >= 3) break;
   }
 
-  return messages.slice(0, 3);
+  return messages;
 }
