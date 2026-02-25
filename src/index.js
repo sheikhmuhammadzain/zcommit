@@ -32,6 +32,7 @@ if (flags.has("--version") || flags.has("-v")) {
 
 import {
   isGitRepo,
+  isInitialCommit,
   getStatus,
   hasStagedChanges,
   getConflictState,
@@ -86,6 +87,27 @@ process.on("unhandledRejection", (err) => {
   console.error(c.red(`\n  Unhandled error: ${err?.message || err}\n`));
   process.exit(1);
 });
+
+// ─── File status icons ──────────────────────────────────────────────────────
+
+/**
+ * Map a git status code to a colored icon for display.
+ * @param {string} status - Single-char git status (M, A, D, R, C, ?, etc.)
+ * @returns {string}
+ */
+function fileIcon(status) {
+  switch (status) {
+    case "M": return c.yellow("~");
+    case "A": return c.green("+");
+    case "D": return c.red("-");
+    case "R": return c.cyan("→");
+    case "C": return c.cyan("©");
+    case "T": return c.dim("T");
+    case "U": return c.red("!");
+    case "?": return c.dim("?");
+    default:  return c.dim("·");
+  }
+}
 
 // ─── Parse flags ─────────────────────────────────────────────────────────────
 
@@ -146,26 +168,36 @@ async function main() {
 
   // ── Step 4: Gather status ────────────────────────────────────────────────
   const status = getStatus();
-  const { staged, unstaged, untracked, all } = status;
-  const hasAnything = all.length > 0;
-  // Use git diff --cached as the source of truth for staged changes
+  const { staged, unstaged, untracked, conflicts, all } = status;
   const alreadyStaged = hasStagedChanges();
+  const isNewRepo = isInitialCommit();
 
-  if (!hasAnything && !alreadyStaged) {
+  // Check for unresolved merge conflicts
+  if (conflicts.length > 0) {
+    console.log(c.red("  ✖ Unresolved merge conflicts:"));
+    for (const f of conflicts) {
+      console.log(`    ${c.red("!")} ${f.file}`);
+    }
+    console.log(c.dim("\n  Resolve conflicts, then run zcommit again.\n"));
+    process.exit(1);
+  }
+
+  if (all.length === 0 && !alreadyStaged) {
     console.log(c.yellow("  ⚠ No changes detected. Nothing to commit.\n"));
     process.exit(0);
   }
 
   // ── Step 5: Staging ──────────────────────────────────────────────────────
   if (alreadyStaged) {
-    // Already have staged changes — show what's staged
+    // Already have staged changes — show them with proper icons
     console.log(c.dim("  Using already-staged changes:"));
     for (const f of staged) {
-      const icon = f.status === "A" ? c.green("+") : c.yellow("~");
-      console.log(`    ${icon} ${f.file}`);
+      const icon = fileIcon(f.status);
+      const label = f.from ? `${f.from} → ${f.file}` : f.file;
+      console.log(`    ${icon} ${label}`);
     }
 
-    // Warn if there are also unstaged changes not included
+    // Warn about unstaged changes not included
     const notStaged = unstaged.length + untracked.length;
     if (notStaged > 0) {
       console.log(
@@ -175,7 +207,10 @@ async function main() {
     console.log();
   } else {
     // Nothing staged — need to stage something
-    const changedFiles = [...unstaged.map((f) => f.file), ...untracked.map((f) => f.file)];
+    const changedFiles = [
+      ...unstaged.map((f) => f.file),
+      ...untracked.map((f) => f.file),
+    ];
 
     if (changedFiles.length === 0) {
       console.log(c.yellow("  ⚠ No changes to stage.\n"));
@@ -184,14 +219,19 @@ async function main() {
 
     console.log(c.bold("  Changed files:"));
     for (const item of all) {
-      const isNew = item.xy.startsWith("?");
-      const icon = isNew ? c.green("+ new") : c.yellow("~  mod");
-      console.log(`    ${icon}  ${item.file}`);
+      const icon = fileIcon(item.xy[0] !== " " && item.xy[0] !== "?" ? item.xy[0] : item.xy[1]);
+      const label = item.from ? `${item.from} → ${item.file}` : item.file;
+      console.log(`    ${icon}  ${label}`);
     }
     console.log();
 
     if (flagAll) {
-      stageAll();
+      try {
+        stageAll();
+      } catch (err) {
+        console.log(c.red(`  ✖ ${err.message}\n`));
+        process.exit(1);
+      }
       console.log(c.green("  ✔ All changes staged.\n"));
     } else {
       const stageChoice = await select(
@@ -200,7 +240,12 @@ async function main() {
       );
 
       if (stageChoice === 0) {
-        stageAll();
+        try {
+          stageAll();
+        } catch (err) {
+          console.log(c.red(`\n  ✖ ${err.message}\n`));
+          process.exit(1);
+        }
         console.log(c.green("\n  ✔ All changes staged.\n"));
       } else {
         const fileInput = await ask(
@@ -226,7 +271,12 @@ async function main() {
           process.exit(1);
         }
 
-        stageFiles(selectedFiles);
+        try {
+          stageFiles(selectedFiles);
+        } catch (err) {
+          console.log(c.red(`\n  ✖ ${err.message}\n`));
+          process.exit(1);
+        }
         console.log(
           c.green(`\n  ✔ Staged ${selectedFiles.length} file(s).\n`)
         );
@@ -234,8 +284,9 @@ async function main() {
     }
 
     // Verify staging actually worked
-    if (!hasStagedChanges()) {
-      console.log(c.red("  ✖ Staging failed — no changes in index.\n"));
+    if (!hasStagedChanges() && !isNewRepo) {
+      console.log(c.red("  ✖ Staging failed — no changes in index."));
+      console.log(c.dim("  This can happen if changes match HEAD (e.g. CRLF normalization).\n"));
       process.exit(1);
     }
   }

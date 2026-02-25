@@ -1,0 +1,12 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(cd \"C:\\\\Users\\\\ibrahim laptops\\\\Desktop\\\\my-clis\\\\zcommit\" && npm pack --dry-run 2>&1)",
+      "Bash(cd \"C:\\\\Users\\\\ibrahim laptops\\\\Desktop\\\\my-clis\\\\zcommit\" && node src/index.js --version 2>&1)",
+      "Bash(cd \"C:\\\\Users\\\\ibrahim laptops\\\\Desktop\\\\my-clis\\\\zcommit\" && node src/index.js --help 2>&1)",
+      "Bash(echo All files parse OK:*)",
+      "Bash(cd \"C:\\\\Users\\\\ibrahim laptops\\\\Desktop\\\\my-clis\\\\zcommit\" && CEREBRAS_API_KEY=\"csk-ce43598jmrc2jF5n3er96hd4cv824k5v6Es8dnh98cptes9kme\" node src/index.js -a 2>&1)",
+      "Bash(cd \"C:\\\\Users\\\\ibrahim laptops\\\\Desktop\\\\my-clis\\\\zcommit\" && git restore --staged . 2>&1)"
+    ]
+  }
+}
