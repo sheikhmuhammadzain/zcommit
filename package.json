@@ -1,0 +1,44 @@
+{
+  "name": "zcommit",
+  "version": "1.0.0",
+  "description": "AI-powered git commit message generator using Cerebras inference. Analyzes your changes and suggests smart commit messages.",
+  "type": "module",
+  "main": "src/index.js",
+  "bin": {
+    "zcommit": "src/index.js"
+  },
+  "scripts": {
+    "start": "node src/index.js",
+    "test": "node --test"
+  },
+  "keywords": [
+    "git",
+    "commit",
+    "ai",
+    "cerebras",
+    "cli",
+    "developer-tools",
+    "productivity",
+    "commit-message",
+    "gpt",
+    "llm",
+    "automation"
+  ],
+  "author": "",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": ""
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "files": [
+    "src/",
+    "LICENSE",
+    "README.md"
+  ],
+  "dependencies": {
+    "@cerebras/cerebras_cloud_sdk": "^1.64.1"
+  }
+}
