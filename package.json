@@ -1,6 +1,6 @@
 {
   "name": "zcommit",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "AI-powered git commit message generator using Cerebras fast inference. Analyzes your changes and suggests smart commit messages.",
   "type": "module",
   "bin": {
