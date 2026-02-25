@@ -5,6 +5,7 @@
 Created by **Muhammad Zain** · [zainafzal.dev](https://zainafzal.dev)
 
 ---
+adf
 
 Stop writing commit messages manually. `zcommit` analyzes your staged changes and generates 3 smart commit messages following the [Conventional Commits](https://www.conventionalcommits.org/) specification. Pick one, hit enter, done.
 
