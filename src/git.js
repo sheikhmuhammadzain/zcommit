@@ -28,7 +28,7 @@ function runRaw(args) {
     maxBuffer: 10 * 1024 * 1024,
     stdio: ["pipe", "pipe", "pipe"],
     timeout: 30_000,
-  }).replace(/\s+$/, "");
+  }).replace(/[\r\n]+$/, "");
 }
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
@@ -161,7 +161,7 @@ const STATUS_LABELS = {
  * }}
  */
 export function getStatus() {
-  const raw = runRaw(["status", "--porcelain"]);
+  const raw = runRaw(["status", "--porcelain=v1"]);
   if (!raw) return { staged: [], unstaged: [], untracked: [], conflicts: [], all: [] };
 
   const staged = [];
@@ -321,7 +321,7 @@ export function getStagedDiff() {
         let fileDiff = run(["diff", "--cached", "--", file]);
 
         // Skip binary file diffs (they show as "Binary files differ")
-        if (fileDiff.includes("Binary files") && fileDiff.length < 200) {
+        if (fileDiff.includes("Binary files")) {
           parts.push(`[binary file: ${file}]`);
           total += 30;
           continue;

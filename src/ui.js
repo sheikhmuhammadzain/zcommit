@@ -271,7 +271,8 @@ async function selectFallback(title, choices) {
   const answer = await ask(`  Enter choice (1-${choices.length}): `);
   const idx = parseInt(answer, 10) - 1;
   if (idx >= 0 && idx < choices.length) return idx;
-  return 0; // default to first
+  console.log(c.dim("  (invalid input — defaulting to option 1)"));
+  return 0;
 }
 
 /**

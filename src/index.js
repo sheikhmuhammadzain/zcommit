@@ -28,6 +28,25 @@ if (flags.has("--version") || flags.has("-v")) {
   process.exit(0);
 }
 
+// ─── Validate arguments ─────────────────────────────────────────────────────
+
+const KNOWN_FLAGS = new Set(["-a", "--all", "-h", "--help", "-v", "--version"]);
+const KNOWN_COMMANDS = new Set(["config"]);
+
+for (const flag of flags) {
+  if (!KNOWN_FLAGS.has(flag)) {
+    console.error(`Unknown flag: ${flag}\nRun "zcommit --help" for usage.`);
+    process.exit(1);
+  }
+}
+
+if (positional[0] && !KNOWN_COMMANDS.has(positional[0])) {
+  console.error(
+    `Unknown command: ${positional[0]}\nRun "zcommit --help" for usage.`
+  );
+  process.exit(1);
+}
+
 // ─── Full imports (only loaded when actually running) ────────────────────────
 
 import {
@@ -107,6 +126,17 @@ function fileIcon(status) {
     case "?": return c.dim("?");
     default:  return c.dim("·");
   }
+}
+
+/**
+ * Safely mask an API key for display, handling short keys.
+ * @param {string} key
+ * @returns {string}
+ */
+function maskKey(key) {
+  if (key.length <= 8) return "•".repeat(key.length);
+  if (key.length <= 12) return key.slice(0, 4) + "•".repeat(key.length - 4);
+  return key.slice(0, 8) + "..." + key.slice(-4);
 }
 
 // ─── Parse flags ─────────────────────────────────────────────────────────────
@@ -248,23 +278,38 @@ async function main() {
         }
         console.log(c.green("\n  ✔ All changes staged.\n"));
       } else {
+        // Show numbered list for selection (avoids spaces-in-paths issues)
+        for (let i = 0; i < changedFiles.length; i++) {
+          console.log(`    ${c.dim(`${i + 1})`)} ${changedFiles[i]}`);
+        }
+        console.log();
         const fileInput = await ask(
-          c.bold("  Enter file paths ") +
-            c.dim("(space-separated)") +
+          c.bold("  File numbers to stage ") +
+            c.dim("(e.g. 1 3 4)") +
             c.bold(": ")
         );
-        const selectedFiles = fileInput
-          .split(/\s+/)
+        const indices = fileInput
+          .split(/[\s,]+/)
           .filter(Boolean)
-          .filter((f) => {
-            const exists = changedFiles.some((sf) => sf.includes(f));
-            if (!exists) {
-              console.log(
-                c.yellow(`  ⚠ '${f}' not in changed files, skipping.`)
-              );
-            }
-            return exists;
-          });
+          .map((n) => parseInt(n, 10));
+
+        const invalid = indices.filter(
+          (n) => isNaN(n) || n < 1 || n > changedFiles.length
+        );
+        if (invalid.length > 0) {
+          console.log(
+            c.yellow(
+              `  ⚠ Ignoring invalid number(s): ${invalid.join(", ")}`
+            )
+          );
+        }
+
+        const valid = indices.filter(
+          (n) => n >= 1 && n <= changedFiles.length
+        );
+        const selectedFiles = [...new Set(valid)].map(
+          (n) => changedFiles[n - 1]
+        );
 
         if (selectedFiles.length === 0) {
           console.log(c.red("\n  ✖ No valid files selected.\n"));
@@ -316,7 +361,11 @@ async function main() {
   let messages;
   try {
     messages = await generateCommitMessages(apiKey, diffData, recentLog);
-    spinner.stop(c.green("  ✔ Generated 3 commit message suggestions.\n"));
+    spinner.stop(
+      c.green(
+        `  ✔ Generated ${messages.length} commit message suggestion${messages.length === 1 ? "" : "s"}.\n`
+      )
+    );
   } catch (err) {
     spinner.stop(c.red("  ✖ Failed to generate messages."));
 
@@ -365,12 +414,12 @@ async function runConfig() {
   const envKey = process.env.CEREBRAS_API_KEY;
 
   if (envKey) {
-    const masked = envKey.slice(0, 8) + "..." + envKey.slice(-4);
+    const masked = maskKey(envKey);
     console.log(
       c.dim(`  Active key: ${masked} (from CEREBRAS_API_KEY env var)`)
     );
   } else if (currentKey) {
-    const masked = currentKey.slice(0, 8) + "..." + currentKey.slice(-4);
+    const masked = maskKey(currentKey);
     console.log(
       c.dim(`  Active key: ${masked} (from ~/.zcommit/config.json)`)
     );

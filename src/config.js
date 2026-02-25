@@ -21,7 +21,9 @@ export function loadConfig() {
       return JSON.parse(readFileSync(CONFIG_FILE, "utf-8"));
     }
   } catch {
-    // Corrupt config, start fresh
+    process.stderr.write(
+      "Warning: ~/.zcommit/config.json is corrupt and was ignored.\n"
+    );
   }
   return {};
 }

@@ -5,7 +5,6 @@
 Created by **Muhammad Zain** · [zainafzal.dev](https://zainafzal.dev)
 
 ---
-adf
 
 Stop writing commit messages manually. `zcommit` analyzes your staged changes and generates 3 smart commit messages following the [Conventional Commits](https://www.conventionalcommits.org/) specification. Pick one, hit enter, done.
 
@@ -45,10 +44,8 @@ zcommit
 ## Usage
 
 ```bash
-zcommit               # Interactive: stage, pick message, confirm
+zcommit               # Interactive: stage, pick message, commit
 zcommit -a            # Stage all files automatically
-zcommit -y            # Skip confirmation prompt
-zcommit -a -y         # Fastest: stage all, pick message, auto-confirm
 zcommit config        # Set, update, or delete your API key
 zcommit --help        # Show help
 zcommit --version     # Show version
@@ -59,7 +56,6 @@ zcommit --version     # Show version
 | Flag               | Description                              |
 | ------------------ | ---------------------------------------- |
 | `-a`, `--all`      | Stage all changes (skip staging prompt)  |
-| `-y`, `--yes`      | Skip commit confirmation                 |
 | `-h`, `--help`     | Show help                                |
 | `-v`, `--version`  | Show version                             |
 
@@ -96,9 +92,6 @@ zcommit --version     # Show version
   ❯ feat(utils): add date formatting helper functions
     refactor(index): simplify main entry point logic
     chore: update utility modules and entry point
-
-  Commit with: "feat(utils): add date formatting helper functions"
-  Proceed? (y/n) y
 
   ✔ Committed successfully!
   Message: "feat(utils): add date formatting helper functions"

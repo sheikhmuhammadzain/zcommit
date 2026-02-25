@@ -66,9 +66,8 @@ export async function generateCommitMessages(apiKey, diffData, recentLog) {
         }
       }
 
-      // Pad with fallbacks if still short
-      while (messages.length < 3) {
-        messages.push("chore: update project files");
+      if (messages.length === 0) {
+        throw new Error("Could not parse commit messages from AI response.");
       }
 
       return messages.slice(0, 3);
@@ -82,7 +81,13 @@ export async function generateCommitMessages(apiKey, diffData, recentLog) {
 
       // Retry on transient errors (429, 500, 502, 503, timeouts)
       if (attempt < MAX_RETRIES) {
-        await sleep(RETRY_DELAYS[attempt]);
+        const retryAfter =
+          err.response?.headers?.get?.("retry-after") ||
+          err.headers?.["retry-after"];
+        const retryMs = retryAfter
+          ? Math.min(parseFloat(retryAfter) * 1000 || RETRY_DELAYS[attempt], 10_000)
+          : RETRY_DELAYS[attempt];
+        await sleep(retryMs);
       }
     }
   }
