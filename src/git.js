@@ -1,16 +1,35 @@
-import { execSync } from "node:child_process";
+import { execFileSync } from "node:child_process";
+
+// ─── Safe git execution ──────────────────────────────────────────────────────
+// Uses execFileSync with argument arrays to prevent shell injection.
 
 /**
- * Execute a git command and return trimmed stdout.
- * @param {string} cmd - Git subcommand and args
- * @returns {string}
+ * Execute a git command safely with argument array.
+ * @param {string[]} args - Git subcommand and arguments
+ * @returns {string} trimmed stdout
  */
-function run(cmd) {
-  return execSync(`git ${cmd}`, {
+function run(args) {
+  return execFileSync("git", args, {
     encoding: "utf-8",
     maxBuffer: 10 * 1024 * 1024,
     stdio: ["pipe", "pipe", "pipe"],
+    timeout: 30_000,
   }).trim();
+}
+
+/**
+ * Execute a git command and return raw stdout (only trailing whitespace removed).
+ * Critical for commands like `status --porcelain` where leading spaces are meaningful.
+ * @param {string[]} args
+ * @returns {string}
+ */
+function runRaw(args) {
+  return execFileSync("git", args, {
+    encoding: "utf-8",
+    maxBuffer: 10 * 1024 * 1024,
+    stdio: ["pipe", "pipe", "pipe"],
+    timeout: 30_000,
+  }).replace(/\s+$/, "");
 }
 
 /**
@@ -18,7 +37,7 @@ function run(cmd) {
  */
 export function isGitRepo() {
   try {
-    run("rev-parse --is-inside-work-tree");
+    run(["rev-parse", "--is-inside-work-tree"]);
     return true;
   } catch {
     return false;
@@ -30,33 +49,99 @@ export function isGitRepo() {
  */
 export function getCurrentBranch() {
   try {
-    return run("branch --show-current");
+    return run(["branch", "--show-current"]) || "HEAD (detached)";
   } catch {
     return "HEAD (detached)";
   }
 }
 
 /**
- * Get a short summary of working-tree status (porcelain).
- * Returns an array of { status, file } objects.
+ * Check if a rebase or merge is in progress.
+ * @returns {"rebase" | "merge" | null}
  */
-export function getStatus() {
-  const raw = run("status --porcelain");
-  if (!raw) return [];
+export function getConflictState() {
+  try {
+    execFileSync("git", ["rev-parse", "--verify", "--quiet", "REBASE_HEAD"], {
+      encoding: "utf-8",
+      stdio: ["pipe", "pipe", "pipe"],
+    });
+    return "rebase";
+  } catch {
+    // no rebase
+  }
 
-  return raw.split("\n").map((line) => ({
-    status: line.slice(0, 2).trim(),
-    file: line.slice(3),
-  }));
+  try {
+    execFileSync("git", ["rev-parse", "--verify", "--quiet", "MERGE_HEAD"], {
+      encoding: "utf-8",
+      stdio: ["pipe", "pipe", "pipe"],
+    });
+    return "merge";
+  } catch {
+    // no merge
+  }
+
+  return null;
 }
 
 /**
- * Check if there are any staged changes.
+ * Parse git status --porcelain output into structured data.
+ *
+ * Porcelain format: XY filename
+ *   X = index (staged) status
+ *   Y = working tree status
+ *   ' ' = unmodified, M = modified, A = added, D = deleted,
+ *   R = renamed, C = copied, ? = untracked, ! = ignored
+ *
+ * @returns {{
+ *   staged: Array<{ status: string, file: string }>,
+ *   unstaged: Array<{ status: string, file: string }>,
+ *   untracked: Array<{ file: string }>,
+ *   all: Array<{ xy: string, file: string }>
+ * }}
+ */
+export function getStatus() {
+  const raw = runRaw(["status", "--porcelain"]);
+  if (!raw) return { staged: [], unstaged: [], untracked: [], all: [] };
+
+  const staged = [];
+  const unstaged = [];
+  const untracked = [];
+  const all = [];
+
+  for (const line of raw.split("\n")) {
+    if (!line) continue;
+
+    const x = line[0]; // index status
+    const y = line[1]; // working tree status
+    const file = line.slice(3);
+
+    all.push({ xy: line.slice(0, 2), file });
+
+    if (x === "?" && y === "?") {
+      untracked.push({ file });
+    } else {
+      // Staged: X is not ' ' and not '?'
+      if (x !== " " && x !== "?") {
+        staged.push({ status: x, file });
+      }
+      // Unstaged: Y is not ' '
+      if (y !== " " && y !== "?") {
+        unstaged.push({ status: y, file });
+      }
+    }
+  }
+
+  return { staged, unstaged, untracked, all };
+}
+
+/**
+ * Check if there are any staged changes using git diff.
+ * This is the most reliable check — directly asks git for cached diff names.
  */
 export function hasStagedChanges() {
   try {
-    const diff = run("diff --cached --name-only");
-    return diff.length > 0;
+    const names = run(["diff", "--cached", "--name-only"]);
+    return names.length > 0;
   } catch {
     return false;
   }
@@ -66,16 +151,15 @@ export function hasStagedChanges() {
  * Stage all changes (git add .).
  */
 export function stageAll() {
-  run("add .");
+  run(["add", "."]);
 }
 
 /**
- * Stage specific files.
+ * Stage specific files safely (no shell injection).
  * @param {string[]} files
  */
 export function stageFiles(files) {
-  const escaped = files.map((f) => `"${f}"`).join(" ");
-  run(`add ${escaped}`);
+  run(["add", "--", ...files]);
 }
 
 /**
@@ -84,17 +168,43 @@ export function stageFiles(files) {
  */
 export function getStagedDiff() {
   try {
-    const diff = run("diff --cached --stat");
-    const detailed = run("diff --cached");
+    const stat = run(["diff", "--cached", "--stat"]);
+    const detailed = run(["diff", "--cached"]);
 
-    // Truncate large diffs to keep prompt reasonable (~4000 chars)
-    const maxLen = 4000;
+    const MAX_DIFF_LEN = 4000;
     const truncated =
-      detailed.length > maxLen
-        ? detailed.slice(0, maxLen) + "\n\n... [diff truncated for brevity]"
+      detailed.length > MAX_DIFF_LEN
+        ? detailed.slice(0, MAX_DIFF_LEN) + "\n\n... [diff truncated]"
         : detailed;
 
-    return { stat: diff, diff: truncated };
+    return { stat, diff: truncated };
+  } catch {
+    return { stat: "", diff: "" };
+  }
+}
+
+/**
+ * For initial commits — get file list when there's no HEAD to diff against.
+ */
+export function getStagedDiffForNewRepo() {
+  try {
+    // Try normal cached diff first
+    const detailed = run(["diff", "--cached"]);
+    if (detailed) {
+      const stat = run(["diff", "--cached", "--stat"]);
+      return { stat, diff: detailed };
+    }
+
+    // No diff means new files only — list them for context
+    const names = run(["diff", "--cached", "--name-only"]);
+    if (names) {
+      return {
+        stat: names,
+        diff: `New files staged for initial commit:\n${names}`,
+      };
+    }
+
+    return { stat: "", diff: "" };
   } catch {
     return { stat: "", diff: "" };
   }
@@ -105,24 +215,16 @@ export function getStagedDiff() {
  */
 export function getRecentLog() {
   try {
-    return run('log --oneline -5 --no-decorate');
+    return run(["log", "--oneline", "-5", "--no-decorate"]);
   } catch {
     return "";
   }
 }
 
 /**
- * Commit with the given message.
+ * Commit with the given message (safe — no shell injection).
  * @param {string} message
  */
 export function commit(message) {
-  run(`commit -m "${message.replace(/"/g, '\\"')}"`);
-}
-
-/**
- * Get the list of changed files (both staged and unstaged) as a simple list.
- */
-export function getChangedFiles() {
-  const status = getStatus();
-  return status.map((s) => s.file);
+  run(["commit", "-m", message]);
 }

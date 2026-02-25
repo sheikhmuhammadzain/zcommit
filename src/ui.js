@@ -1,22 +1,51 @@
 import { createInterface } from "node:readline";
 
-// ─── Color helpers (no dependencies) ─────────────────────────────────────────
+// ─── Color support detection ─────────────────────────────────────────────────
+// Respects NO_COLOR (https://no-color.org/), FORCE_COLOR, and dumb terminals.
 
-const esc = (code) => `\x1b[${code}m`;
+const isTTY = process.stdout.isTTY === true;
+const forceColor = "FORCE_COLOR" in process.env;
+const noColor =
+  "NO_COLOR" in process.env ||
+  process.env.TERM === "dumb" ||
+  (!isTTY && !forceColor);
+
+const esc = (code) => (noColor ? "" : `\x1b[${code}m`);
 const reset = esc(0);
 
+function wrap(code) {
+  return noColor ? (s) => s : (s) => `${esc(code)}${s}${reset}`;
+}
+
 export const c = {
-  bold: (s) => `${esc(1)}${s}${reset}`,
-  dim: (s) => `${esc(2)}${s}${reset}`,
-  green: (s) => `${esc(32)}${s}${reset}`,
-  yellow: (s) => `${esc(33)}${s}${reset}`,
-  blue: (s) => `${esc(34)}${s}${reset}`,
-  magenta: (s) => `${esc(35)}${s}${reset}`,
-  cyan: (s) => `${esc(36)}${s}${reset}`,
-  red: (s) => `${esc(31)}${s}${reset}`,
-  bgBlue: (s) => `${esc(44)}${esc(37)}${esc(1)} ${s} ${reset}`,
-  bgGreen: (s) => `${esc(42)}${esc(30)}${esc(1)} ${s} ${reset}`,
+  bold: wrap(1),
+  dim: wrap(2),
+  green: wrap(32),
+  yellow: wrap(33),
+  cyan: wrap(36),
+  red: wrap(31),
 };
+
+// ─── Terminal safety helpers ─────────────────────────────────────────────────
+
+/** Restore cursor visibility — safe to call multiple times. */
+export function restoreCursor() {
+  if (isTTY) {
+    process.stdout.write("\x1b[?25h");
+  }
+}
+
+/** Ensure stdin is properly cleaned up if it was in raw mode. */
+export function restoreStdin() {
+  try {
+    if (process.stdin.isTTY && process.stdin.isRaw) {
+      process.stdin.setRawMode(false);
+    }
+    process.stdin.pause();
+  } catch {
+    // Already closed — safe to ignore
+  }
+}
 
 // ─── Spinner ─────────────────────────────────────────────────────────────────
 
@@ -28,23 +57,32 @@ export function createSpinner(text) {
 
   return {
     start() {
+      if (!isTTY) {
+        // Non-interactive: just print once
+        process.stdout.write(`  ${text}\n`);
+        return;
+      }
       process.stdout.write("\x1b[?25l"); // hide cursor
       interval = setInterval(() => {
         const frame = c.cyan(SPINNER_FRAMES[i % SPINNER_FRAMES.length]);
-        process.stdout.write(`\r${frame} ${text}`);
+        process.stdout.write(`\r\x1b[K${frame} ${text}`);
         i++;
       }, 80);
     },
     stop(finalText) {
+      if (!isTTY) {
+        if (finalText) process.stdout.write(`${finalText}\n`);
+        return;
+      }
       clearInterval(interval);
-      process.stdout.write(`\r\x1b[K`); // clear line
+      process.stdout.write("\r\x1b[K"); // clear line
       if (finalText) process.stdout.write(`${finalText}\n`);
       process.stdout.write("\x1b[?25h"); // show cursor
     },
   };
 }
 
-// ─── Prompts (zero-dependency) ───────────────────────────────────────────────
+// ─── Prompts ─────────────────────────────────────────────────────────────────
 
 /**
  * Ask a simple text question.
@@ -87,95 +125,124 @@ export function askSecret(question) {
     });
 
     // Override _writeToOutput to mask input
-    const originalWrite = rl._writeToOutput;
+    const originalWrite = rl._writeToOutput.bind(rl);
     rl._writeToOutput = function (str) {
       if (str.includes("\n") || str.includes("\r")) {
-        originalWrite.call(rl, str);
+        originalWrite(str);
       } else {
-        // Only show the question, mask everything after
-        const questionLen = question.length;
-        if (str.length > questionLen) {
-          originalWrite.call(rl, question + "*".repeat(str.length - questionLen));
+        // Mask everything after the question text
+        const stripped = str.replace(/\x1b\[[0-9;]*m/g, "");
+        const qStripped = question.replace(/\x1b\[[0-9;]*m/g, "");
+        if (stripped.length > qStripped.length) {
+          originalWrite(question + "*".repeat(stripped.length - qStripped.length));
         } else {
-          originalWrite.call(rl, str);
+          originalWrite(str);
         }
       }
     };
 
     rl.question(question, (answer) => {
       rl.close();
-      console.log(); // newline after masked input
+      console.log();
       resolve(answer.trim());
     });
   });
 }
 
 /**
- * Interactive select menu - user scrolls with arrow keys and presses Enter.
+ * Interactive select menu — arrow keys to scroll, Enter to confirm.
+ * Falls back to numbered input if not a TTY.
+ *
  * @param {string} title
  * @param {string[]} choices
  * @returns {Promise<number>} Selected index
  */
 export function select(title, choices) {
+  // Non-TTY fallback: numbered list + text input
+  if (!process.stdin.isTTY) {
+    return selectFallback(title, choices);
+  }
+
   return new Promise((resolve) => {
     let selected = 0;
+    const totalLines = 1 + choices.length; // title + options
+    let firstDraw = true;
+    const out = process.stdout;
 
     function render() {
-      // Move cursor up to re-render (clear previous render)
-      if (render.drawn) {
-        process.stdout.write(`\x1b[${choices.length + 1}A`);
+      if (!firstDraw) {
+        out.write(`\x1b[${totalLines}A`);
+      }
+      firstDraw = false;
+
+      out.write("\x1b[?25l"); // hide cursor
+
+      // Title line
+      out.write(`\x1b[2K${title}\n`);
+
+      // Choice lines
+      for (let i = 0; i < choices.length; i++) {
+        const isActive = i === selected;
+        const prefix = isActive ? c.cyan("❯") : " ";
+        const text = isActive ? c.cyan(c.bold(choices[i])) : c.dim(choices[i]);
+        out.write(`\x1b[2K  ${prefix} ${text}\n`);
       }
 
-      console.log(`\n${title}`);
-      choices.forEach((choice, i) => {
-        const prefix = i === selected ? c.cyan("❯") : " ";
-        const text = i === selected ? c.cyan(c.bold(choice)) : c.dim(choice);
-        // Clear line before writing
-        process.stdout.write(`\x1b[K  ${prefix} ${text}\n`);
-      });
-      render.drawn = true;
+      out.write("\x1b[?25h"); // show cursor
     }
 
-    // Enable raw mode for arrow key detection
+    out.write("\n");
+    render();
+
+    // Enable raw mode
     process.stdin.setRawMode(true);
     process.stdin.resume();
     process.stdin.setEncoding("utf-8");
-
-    render();
 
     function onKeypress(key) {
       // Ctrl+C
       if (key === "\x03") {
         cleanup();
-        process.stdout.write("\n");
+        restoreCursor();
+        out.write("\n");
         process.exit(0);
       }
 
       // Enter
       if (key === "\r" || key === "\n") {
         cleanup();
-        // Final render showing selection
-        process.stdout.write(`\x1b[${choices.length + 1}A`);
-        console.log(`\n${title}`);
-        choices.forEach((choice, i) => {
+
+        // Final render with checkmark
+        out.write(`\x1b[${totalLines}A`);
+        out.write("\x1b[?25l");
+        out.write(`\x1b[2K${title}\n`);
+
+        for (let i = 0; i < choices.length; i++) {
           if (i === selected) {
-            process.stdout.write(`\x1b[K  ${c.green("✔")} ${c.bold(choice)}\n`);
+            out.write(`\x1b[2K  ${c.green("✔")} ${c.bold(choices[i])}\n`);
           } else {
-            process.stdout.write(`\x1b[K  ${c.dim("  " + choice)}\n`);
+            out.write(`\x1b[2K    ${c.dim(choices[i])}\n`);
           }
-        });
+        }
+
+        out.write("\x1b[?25h");
         resolve(selected);
         return;
       }
 
-      // Arrow keys come as escape sequences
+      // Up arrow or k
       if (key === "\x1b[A" || key === "k") {
-        // Up
         selected = (selected - 1 + choices.length) % choices.length;
         render();
-      } else if (key === "\x1b[B" || key === "j") {
-        // Down
+      }
+      // Down arrow or j
+      else if (key === "\x1b[B" || key === "j") {
         selected = (selected + 1) % choices.length;
+        render();
+      }
+      // Number keys 1-9 for direct selection
+      else if (key >= "1" && key <= String(choices.length)) {
+        selected = parseInt(key, 10) - 1;
         render();
       }
     }
@@ -188,6 +255,23 @@ export function select(title, choices) {
 
     process.stdin.on("data", onKeypress);
   });
+}
+
+/**
+ * Fallback selection for non-TTY environments (piped input).
+ * @param {string} title
+ * @param {string[]} choices
+ * @returns {Promise<number>}
+ */
+async function selectFallback(title, choices) {
+  console.log(`\n${title}`);
+  choices.forEach((choice, i) => {
+    console.log(`  ${i + 1}) ${choice}`);
+  });
+  const answer = await ask(`  Enter choice (1-${choices.length}): `);
+  const idx = parseInt(answer, 10) - 1;
+  if (idx >= 0 && idx < choices.length) return idx;
+  return 0; // default to first
 }
 
 /**

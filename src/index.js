@@ -4,34 +4,22 @@ import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 
-import {
-  isGitRepo,
-  getStatus,
-  hasStagedChanges,
-  stageAll,
-  stageFiles,
-  getStagedDiff,
-  getRecentLog,
-  commit,
-  getCurrentBranch,
-} from "./git.js";
-import { generateCommitMessages } from "./ai.js";
-import { getApiKey, setApiKey } from "./config.js";
-import { banner, c, ask, askSecret, confirm, select, createSpinner } from "./ui.js";
-
-// ─── Load version from package.json ──────────────────────────────────────────
+// ─── Load version from package.json (fast, sync) ────────────────────────────
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
-const pkg = JSON.parse(readFileSync(join(__dirname, "..", "package.json"), "utf-8"));
+const pkg = JSON.parse(
+  readFileSync(join(__dirname, "..", "package.json"), "utf-8")
+);
 
-// ─── CLI Argument Parsing ────────────────────────────────────────────────────
+// ─── Fast-exit paths (no heavy imports needed) ──────────────────────────────
 
 const args = process.argv.slice(2);
 const flags = new Set(args.filter((a) => a.startsWith("-")));
 const positional = args.filter((a) => !a.startsWith("-"));
 
 if (flags.has("--help") || flags.has("-h")) {
-  printHelp();
+  const { printHelp } = await import("./help.js");
+  printHelp(pkg.version);
   process.exit(0);
 }
 
@@ -40,35 +28,108 @@ if (flags.has("--version") || flags.has("-v")) {
   process.exit(0);
 }
 
+// ─── Full imports (only loaded when actually running) ────────────────────────
+
+import {
+  isGitRepo,
+  getStatus,
+  hasStagedChanges,
+  getConflictState,
+  stageAll,
+  stageFiles,
+  getStagedDiff,
+  getStagedDiffForNewRepo,
+  getRecentLog,
+  commit,
+  getCurrentBranch,
+} from "./git.js";
+import { generateCommitMessages } from "./ai.js";
+import { getApiKey, setApiKey, deleteApiKey, getConfigPath } from "./config.js";
+import {
+  banner,
+  c,
+  ask,
+  askSecret,
+  confirm,
+  select,
+  createSpinner,
+  restoreCursor,
+  restoreStdin,
+} from "./ui.js";
+
+// ─── Graceful shutdown — always restore terminal state ──────────────────────
+
+function cleanup() {
+  restoreCursor();
+  restoreStdin();
+}
+
+process.on("SIGINT", () => {
+  cleanup();
+  console.log(c.dim("\n  Interrupted.\n"));
+  process.exit(130);
+});
+
+process.on("SIGTERM", () => {
+  cleanup();
+  process.exit(143);
+});
+
+process.on("uncaughtException", (err) => {
+  cleanup();
+  console.error(c.red(`\n  Fatal error: ${err.message}\n`));
+  process.exit(1);
+});
+
+process.on("unhandledRejection", (err) => {
+  cleanup();
+  console.error(c.red(`\n  Unhandled error: ${err?.message || err}\n`));
+  process.exit(1);
+});
+
+// ─── Parse flags ─────────────────────────────────────────────────────────────
+
+const flagAll = flags.has("--all") || flags.has("-a");
+const flagYes = flags.has("--yes") || flags.has("-y");
+
+// ─── Route subcommands ──────────────────────────────────────────────────────
+
 if (positional[0] === "config") {
   await runConfig();
   process.exit(0);
 }
 
-// ─── Main Flow ───────────────────────────────────────────────────────────────
+// ─── Main flow ──────────────────────────────────────────────────────────────
 
 await main();
 
 async function main() {
   banner();
 
-  // 1. Check git repo
+  // ── Step 1: Verify git repo ──────────────────────────────────────────────
   if (!isGitRepo()) {
     console.log(c.red("  ✖ Not a git repository."));
     console.log(c.dim("  Run this command inside a git project.\n"));
     process.exit(1);
   }
 
+  // ── Step 2: Check for conflict state ─────────────────────────────────────
+  const conflict = getConflictState();
+  if (conflict) {
+    console.log(c.red(`  ✖ A ${conflict} is in progress.`));
+    console.log(c.dim(`  Resolve the ${conflict} before committing.\n`));
+    process.exit(1);
+  }
+
   const branch = getCurrentBranch();
   console.log(c.dim(`  Branch: ${c.bold(branch)}`));
 
-  // 2. Check for API key
+  // ── Step 3: Check for API key ────────────────────────────────────────────
   let apiKey = getApiKey();
   if (!apiKey) {
     console.log(c.yellow("  ⚠ No Cerebras API key found.\n"));
     console.log(
-      c.dim("  Get a free key at: ") +
-        c.cyan("https://cloud.cerebras.ai")
+      c.dim("  Get a free key at: ") + c.cyan("https://cloud.cerebras.ai")
     );
     console.log();
     apiKey = await askSecret(c.bold("  Enter your Cerebras API key: "));
@@ -76,9 +137,7 @@ async function main() {
       console.log(c.red("\n  ✖ API key is required.\n"));
       process.exit(1);
     }
-    const shouldSave = await confirm(
-      c.dim("  Save key for future use?")
-    );
+    const shouldSave = await confirm(c.dim("  Save key for future use?"));
     if (shouldSave) {
       setApiKey(apiKey);
       console.log(c.green("  ✔ Key saved to ~/.zcommit/config.json\n"));
@@ -86,73 +145,122 @@ async function main() {
     console.log();
   }
 
-  // 3. Check for changes
+  // ── Step 4: Gather status ────────────────────────────────────────────────
   const status = getStatus();
-  if (status.length === 0 && !hasStagedChanges()) {
+  const { staged, unstaged, untracked, all } = status;
+  const hasAnything = all.length > 0;
+  // Use git diff --cached as the source of truth for staged changes
+  const alreadyStaged = hasStagedChanges();
+
+  if (!hasAnything && !alreadyStaged) {
     console.log(c.yellow("  ⚠ No changes detected. Nothing to commit.\n"));
     process.exit(0);
   }
 
-  // 4. Stage files
-  const staged = hasStagedChanges();
+  // ── Step 5: Staging ──────────────────────────────────────────────────────
+  if (alreadyStaged) {
+    // Already have staged changes — show what's staged
+    console.log(c.dim("  Using already-staged changes:"));
+    for (const f of staged) {
+      const icon = f.status === "A" ? c.green("+") : c.yellow("~");
+      console.log(`    ${icon} ${f.file}`);
+    }
 
-  if (!staged) {
+    // Warn if there are also unstaged changes not included
+    const notStaged = unstaged.length + untracked.length;
+    if (notStaged > 0) {
+      console.log(
+        c.dim(`\n  Note: ${notStaged} other changed file(s) not staged.`)
+      );
+    }
+    console.log();
+  } else {
+    // Nothing staged — need to stage something
+    const changedFiles = [...unstaged.map((f) => f.file), ...untracked.map((f) => f.file)];
+
+    if (changedFiles.length === 0) {
+      console.log(c.yellow("  ⚠ No changes to stage.\n"));
+      process.exit(0);
+    }
+
     console.log(c.bold("  Changed files:"));
-    status.forEach((s) => {
-      const icon = s.status === "?" ? c.green("+") : c.yellow("~");
-      console.log(`    ${icon} ${s.file}`);
-    });
+    for (const item of all) {
+      const isNew = item.xy.startsWith("?");
+      const icon = isNew ? c.green("+ new") : c.yellow("~  mod");
+      console.log(`    ${icon}  ${item.file}`);
+    }
     console.log();
 
-    const stageChoice = await select(c.bold("  How would you like to stage?"), [
-      "Stage all changes  (git add .)",
-      "Select specific files",
-    ]);
-
-    if (stageChoice === 0) {
+    if (flagAll) {
       stageAll();
-      console.log(c.green("\n  ✔ All changes staged.\n"));
+      console.log(c.green("  ✔ All changes staged.\n"));
     } else {
-      // Let user type file names/patterns
-      const files = status.map((s) => s.file);
-      const fileInput = await ask(
-        c.bold("  Enter file paths ") +
-          c.dim("(space-separated, or glob pattern)") +
-          c.bold(": ")
+      const stageChoice = await select(
+        c.bold("  How would you like to stage?"),
+        ["Stage all changes  (git add .)", "Select specific files"]
       );
-      const selectedFiles = fileInput
-        .split(/\s+/)
-        .filter(Boolean)
-        .filter((f) => {
-          // Basic validation: check if file exists in status
-          const exists = files.some((sf) => sf.includes(f));
-          if (!exists) console.log(c.yellow(`  ⚠ '${f}' not in changed files, skipping.`));
-          return exists;
-        });
 
-      if (selectedFiles.length === 0) {
-        console.log(c.red("\n  ✖ No valid files selected.\n"));
-        process.exit(1);
+      if (stageChoice === 0) {
+        stageAll();
+        console.log(c.green("\n  ✔ All changes staged.\n"));
+      } else {
+        const fileInput = await ask(
+          c.bold("  Enter file paths ") +
+            c.dim("(space-separated)") +
+            c.bold(": ")
+        );
+        const selectedFiles = fileInput
+          .split(/\s+/)
+          .filter(Boolean)
+          .filter((f) => {
+            const exists = changedFiles.some((sf) => sf.includes(f));
+            if (!exists) {
+              console.log(
+                c.yellow(`  ⚠ '${f}' not in changed files, skipping.`)
+              );
+            }
+            return exists;
+          });
+
+        if (selectedFiles.length === 0) {
+          console.log(c.red("\n  ✖ No valid files selected.\n"));
+          process.exit(1);
+        }
+
+        stageFiles(selectedFiles);
+        console.log(
+          c.green(`\n  ✔ Staged ${selectedFiles.length} file(s).\n`)
+        );
       }
-
-      stageFiles(selectedFiles);
-      console.log(c.green(`\n  ✔ Staged ${selectedFiles.length} file(s).\n`));
     }
-  } else {
-    console.log(c.dim("  Using already-staged changes.\n"));
+
+    // Verify staging actually worked
+    if (!hasStagedChanges()) {
+      console.log(c.red("  ✖ Staging failed — no changes in index.\n"));
+      process.exit(1);
+    }
   }
 
-  // 5. Get diff for AI
-  const diffData = getStagedDiff();
+  // ── Step 6: Get diff for AI ──────────────────────────────────────────────
+  let diffData = getStagedDiff();
+
+  // Fallback for initial commits (no HEAD to diff against)
   if (!diffData.diff) {
-    console.log(c.yellow("  ⚠ No staged diff found. Nothing to commit.\n"));
-    process.exit(0);
+    diffData = getStagedDiffForNewRepo();
+  }
+
+  if (!diffData.diff) {
+    console.log(c.red("  ✖ Could not read staged changes."));
+    console.log(c.dim("  Try running: git diff --cached\n"));
+    process.exit(1);
   }
 
   const recentLog = getRecentLog();
 
-  // 6. Generate commit messages
-  const spinner = createSpinner(c.bold("Generating commit messages with AI..."));
+  // ── Step 7: Generate commit messages ─────────────────────────────────────
+  const spinner = createSpinner(
+    c.bold("Generating commit messages with AI...")
+  );
   spinner.start();
 
   let messages;
@@ -161,11 +269,20 @@ async function main() {
     spinner.stop(c.green("  ✔ Generated 3 commit message suggestions.\n"));
   } catch (err) {
     spinner.stop(c.red("  ✖ Failed to generate messages."));
-    if (err.status === 401) {
+
+    if (err.status === 401 || err.status === 403) {
       console.log(
         c.red("  Invalid API key. Run ") +
           c.bold("zcommit config") +
           c.red(" to update.\n")
+      );
+    } else if (err.code === "ENOTFOUND" || err.code === "ECONNREFUSED") {
+      console.log(
+        c.red("  Network error. Check your internet connection.\n")
+      );
+    } else if (err.status === 429) {
+      console.log(
+        c.red("  Rate limited. Please wait a moment and try again.\n")
       );
     } else {
       console.log(c.red(`  Error: ${err.message}\n`));
@@ -173,23 +290,25 @@ async function main() {
     process.exit(1);
   }
 
-  // 7. Let user pick a message
+  // ── Step 8: Pick a message ───────────────────────────────────────────────
   const choice = await select(c.bold("  Pick a commit message:"), messages);
   const selectedMessage = messages[choice];
 
   console.log();
 
-  // 8. Confirm and commit
-  const shouldCommit = await confirm(
-    `  ${c.bold("Commit with:")} ${c.green(`"${selectedMessage}"`)}\n  ${c.dim("Proceed?")}`
-  );
+  // ── Step 9: Confirm ──────────────────────────────────────────────────────
+  if (!flagYes) {
+    const shouldCommit = await confirm(
+      `  ${c.bold("Commit with:")} ${c.green(`"${selectedMessage}"`)}\n  ${c.dim("Proceed?")}`
+    );
 
-  if (!shouldCommit) {
-    console.log(c.yellow("\n  ⚠ Commit cancelled.\n"));
-    process.exit(0);
+    if (!shouldCommit) {
+      console.log(c.yellow("\n  ⚠ Commit cancelled.\n"));
+      process.exit(0);
+    }
   }
 
-  // 9. Execute commit
+  // ── Step 10: Commit ──────────────────────────────────────────────────────
   try {
     commit(selectedMessage);
     console.log(c.green(`\n  ✔ Committed successfully!`));
@@ -200,23 +319,70 @@ async function main() {
   }
 }
 
-// ─── Config Subcommand ───────────────────────────────────────────────────────
+// ─── Config subcommand ──────────────────────────────────────────────────────
 
 async function runConfig() {
   banner();
   console.log(c.bold("  Configure zcommit\n"));
 
   const currentKey = getApiKey();
-  if (currentKey) {
+  const envKey = process.env.CEREBRAS_API_KEY;
+
+  if (envKey) {
+    const masked = envKey.slice(0, 8) + "..." + envKey.slice(-4);
+    console.log(
+      c.dim(`  Active key: ${masked} (from CEREBRAS_API_KEY env var)`)
+    );
+  } else if (currentKey) {
     const masked = currentKey.slice(0, 8) + "..." + currentKey.slice(-4);
-    console.log(c.dim(`  Current key: ${masked}`));
-    const shouldUpdate = await confirm("  Update API key?");
-    if (!shouldUpdate) {
-      console.log(c.dim("\n  No changes made.\n"));
-      return;
-    }
+    console.log(
+      c.dim(`  Active key: ${masked} (from ~/.zcommit/config.json)`)
+    );
+  } else {
+    console.log(c.yellow("  No API key configured.\n"));
+    console.log(
+      c.dim("  Get a free key at: ") + c.cyan("https://cloud.cerebras.ai")
+    );
+    console.log();
   }
 
+  const options = [];
+  if (currentKey || envKey) {
+    options.push("Set new API key");
+    if (currentKey && !envKey) {
+      options.push("Delete saved API key");
+    }
+    options.push("Show config path");
+    options.push("Exit");
+  } else {
+    options.push("Set API key");
+    options.push("Exit");
+  }
+
+  const choice = await select(c.bold("  What would you like to do?"), options);
+  const picked = options[choice];
+
+  if (picked === "Exit") {
+    console.log();
+    return;
+  }
+
+  if (picked === "Show config path") {
+    console.log(c.dim(`\n  Config file: ${getConfigPath()}\n`));
+    return;
+  }
+
+  if (picked === "Delete saved API key") {
+    const deleted = deleteApiKey();
+    if (deleted) {
+      console.log(c.green("\n  ✔ API key deleted from config.\n"));
+    } else {
+      console.log(c.dim("\n  No saved key to delete.\n"));
+    }
+    return;
+  }
+
+  console.log();
   const key = await askSecret(c.bold("  Enter your Cerebras API key: "));
   if (!key) {
     console.log(c.red("\n  ✖ No key provided.\n"));
@@ -225,42 +391,4 @@ async function runConfig() {
 
   setApiKey(key);
   console.log(c.green("\n  ✔ API key saved to ~/.zcommit/config.json\n"));
-}
-
-// ─── Help Text ───────────────────────────────────────────────────────────────
-
-function printHelp() {
-  console.log(`
-${c.bold(c.cyan("⚡ zcommit"))} ${c.dim(`v${pkg.version}`)} — AI-powered git commit messages
-
-${c.bold("USAGE")}
-  ${c.cyan("zcommit")}              Analyze changes & generate commit messages
-  ${c.cyan("zcommit config")}       Configure your Cerebras API key
-  ${c.cyan("zcommit --help")}       Show this help message
-  ${c.cyan("zcommit --version")}    Show version
-
-${c.bold("HOW IT WORKS")}
-  1. Detects uncommitted changes in your git repo
-  2. Asks how you want to stage (all or specific files)
-  3. Sends the diff to Cerebras AI (gpt-oss-120b)
-  4. Presents 3 commit message suggestions
-  5. You pick one, and it commits for you
-
-${c.bold("CONFIGURATION")}
-  API key is read from (in priority order):
-    1. ${c.cyan("CEREBRAS_API_KEY")} environment variable
-    2. ${c.cyan("~/.zcommit/config.json")} config file
-
-  Get a free API key at: ${c.cyan("https://cloud.cerebras.ai")}
-
-${c.bold("EXAMPLES")}
-  ${c.dim("# Quick commit with AI message")}
-  $ zcommit
-
-  ${c.dim("# Set up API key")}
-  $ zcommit config
-
-  ${c.dim("# Use env variable")}
-  $ CEREBRAS_API_KEY=csk-xxx zcommit
-`);
 }

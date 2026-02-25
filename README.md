@@ -8,12 +8,17 @@ Stop writing commit messages manually. `zcommit` analyzes your staged changes an
 
 - Analyzes your git diff to understand what changed
 - Generates 3 commit message suggestions using Cerebras AI (gpt-oss-120b)
-- Interactive arrow-key selection UI
+- Interactive arrow-key selection UI with vim keybindings (j/k)
 - Follows Conventional Commits format (`feat:`, `fix:`, `refactor:`, etc.)
 - Supports staging all files or selecting specific ones
-- Persists API key securely in `~/.zcommit/config.json`
+- Persists API key securely in `~/.zcommit/config.json` (0600 permissions)
 - Zero config needed beyond an API key
-- Lightweight — only one dependency
+- Lightweight: only one dependency (`@cerebras/cerebras_cloud_sdk`)
+- Fast startup: heavy SDK is lazy-loaded only when needed
+- Automatic retry with backoff on transient API failures
+- Graceful terminal cleanup on Ctrl+C or crashes
+- Respects `NO_COLOR` and `FORCE_COLOR` environment variables
+- Works in non-TTY environments (CI/CD) with numbered fallback
 
 ## Installation
 
@@ -21,44 +26,37 @@ Stop writing commit messages manually. `zcommit` analyzes your staged changes an
 npm install -g zcommit
 ```
 
-## Setup
-
-Get a **free** Cerebras API key at [cloud.cerebras.ai](https://cloud.cerebras.ai).
-
-Then either:
+## Quick Start
 
 ```bash
-# Option 1: Configure via CLI (saved to ~/.zcommit/config.json)
+# 1. Get a free API key at https://cloud.cerebras.ai
+# 2. Configure it once:
 zcommit config
 
-# Option 2: Set environment variable
-export CEREBRAS_API_KEY="your-key-here"
+# 3. Go to any git repo and commit:
+zcommit
 ```
 
 ## Usage
 
 ```bash
-# Navigate to your git repo, make some changes, then:
-zcommit
+zcommit               # Interactive: stage, pick message, confirm
+zcommit -a            # Stage all files automatically
+zcommit -y            # Skip confirmation prompt
+zcommit -a -y         # Fastest: stage all, pick message, auto-confirm
+zcommit config        # Set/update your Cerebras API key
+zcommit --help        # Show help
+zcommit --version     # Show version
 ```
 
-That's it. The tool will:
+### Flags
 
-1. Detect your uncommitted changes
-2. Ask how you want to stage (all files or select specific ones)
-3. Send the diff to Cerebras AI
-4. Show you 3 commit message options
-5. You scroll with arrow keys, pick one, and confirm
-6. It commits with your chosen message
-
-### Commands
-
-| Command            | Description                    |
-| ------------------ | ------------------------------ |
-| `zcommit`          | Generate & commit              |
-| `zcommit config`   | Set/update your API key        |
-| `zcommit --help`   | Show help                      |
-| `zcommit --version`| Show version                   |
+| Flag               | Description                              |
+| ------------------ | ---------------------------------------- |
+| `-a`, `--all`      | Stage all changes (skip staging prompt)  |
+| `-y`, `--yes`      | Skip commit confirmation                 |
+| `-h`, `--help`     | Show help                                |
+| `-v`, `--version`  | Show version                             |
 
 ## Example
 
@@ -71,11 +69,11 @@ That's it. The tool will:
     + src/utils.js
     ~ src/index.js
 
+  How would you like to stage?
   ❯ Stage all changes  (git add .)
     Select specific files
 
   ✔ All changes staged.
-
   ✔ Generated 3 commit message suggestions.
 
   Pick a commit message:
@@ -87,20 +85,35 @@ That's it. The tool will:
   Proceed? (y/n) y
 
   ✔ Committed successfully!
+  Message: "feat(utils): add date formatting helper functions"
 ```
 
 ## Configuration
 
-The API key is resolved in this order:
+API key is resolved in this order:
 
 1. `CEREBRAS_API_KEY` environment variable
 2. `~/.zcommit/config.json` file
+
+### Environment Variables
+
+| Variable           | Description                     |
+| ------------------ | ------------------------------- |
+| `CEREBRAS_API_KEY` | Your Cerebras API key           |
+| `NO_COLOR`         | Disable colored output          |
+| `FORCE_COLOR`      | Force colors in non-TTY output  |
+
+## Security
+
+- API keys stored in `~/.zcommit/config.json` are protected with `0600` file permissions (owner read/write only)
+- Git commands use `execFileSync` (argument arrays) — **no shell injection possible**
+- API keys from environment variables are never written to disk unless you opt in
 
 ## Requirements
 
 - Node.js 18+
 - Git installed and in PATH
-- A Cerebras API key (free tier available)
+- A Cerebras API key ([free tier available](https://cloud.cerebras.ai))
 
 ## License
 

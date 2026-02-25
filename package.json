@@ -1,15 +1,14 @@
 {
   "name": "zcommit",
   "version": "1.0.0",
-  "description": "AI-powered git commit message generator using Cerebras inference. Analyzes your changes and suggests smart commit messages.",
+  "description": "AI-powered git commit message generator using Cerebras fast inference. Analyzes your changes and suggests smart commit messages.",
   "type": "module",
-  "main": "src/index.js",
   "bin": {
     "zcommit": "src/index.js"
   },
   "scripts": {
     "start": "node src/index.js",
-    "test": "node --test"
+    "prepublishOnly": "node src/index.js --version"
   },
   "keywords": [
     "git",
@@ -20,7 +19,7 @@
     "developer-tools",
     "productivity",
     "commit-message",
-    "gpt",
+    "conventional-commits",
     "llm",
     "automation"
   ],
