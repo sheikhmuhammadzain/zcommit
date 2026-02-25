@@ -23,12 +23,16 @@
     "llm",
     "automation"
   ],
-  "author": "Muhammad Zain (https://zainafzal.dev)",
+  "author": "Muhammad Zain <zainsheikh3462@gmail.com> (https://zainafzal.dev)",
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": ""
+    "url": "git+https://github.com/sheikhmuhammadzain/zcommit.git"
   },
+  "bugs": {
+    "url": "https://github.com/sheikhmuhammadzain/zcommit/issues"
+  },
+  "homepage": "https://github.com/sheikhmuhammadzain/zcommit#readme",
   "engines": {
     "node": ">=18.0.0"
   },
